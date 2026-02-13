@@ -1,95 +1,144 @@
-const { Client, GatewayIntentBits, EmbedBuilder, IntentsBitField } = require('discord.js')
-const { config } = require('process')
-const { token, hypixelKey, memberRole } = require('./config.json')
-const axios = require('axios').default
+const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
+const axios = require('axios').default;
 
-const client = new Client({ intents: 3276799 })
+const client = new Client({ 
+  intents: 3276799   // or better: use specific intents only (see note below)
+});
+
+// ────────────────────────────────────────────────
+//          Read secrets from environment variables
+// ────────────────────────────────────────────────
+const TOKEN       = process.env.DISCORD_TOKEN;
+const HYPIXEL_KEY = process.env.HYPIXEL_API_KEY;
+const MEMBER_ROLE = process.env.MEMBER_ROLE_ID;   // renamed for clarity
+
+// Optional: crash early if critical values are missing
+if (!TOKEN) {
+  console.error("DISCORD_TOKEN is missing in environment variables!");
+  process.exit(1);
+}
+if (!HYPIXEL_KEY) {
+  console.error("HYPIXEL_API_KEY is missing in environment variables!");
+  process.exit(1);
+}
+if (!MEMBER_ROLE) {
+  console.warn("MEMBER_ROLE_ID is not set → role features will not work");
+}
 
 client.once('ready', () => {
-	console.log('Ready!')
-})
+  console.log(`Ready! Logged in as ${client.user.tag}`);
+});
 
 client.on('interactionCreate', async interaction => {
-	if (!interaction.isChatInputCommand()) return
+  if (!interaction.isChatInputCommand()) return;
 
-	const { commandName } = interaction
-    var uuid
-    var username
-    var embed
-    var memrole
+  const { commandName } = interaction;
 
-	if (commandName === 'ping') {
-		await interaction.reply('Pong!')
-	} else if (commandName === 'verify') {
-        username = interaction.options.get('username').value
-        console.log(username)
-        axios.get(`https://api.mojang.com/users/profiles/minecraft/${username}`)
-        .catch(async err => (
-            console.log(`Unable to communicate with Mojang API:
-            ${err}`)
-        ))
-        .then(async response => {
+  if (commandName === 'ping') {
+    await interaction.reply('Pong!');
+    return;
+  }
 
-            async function nolink() {
-                var embed = new EmbedBuilder()
-                    .setColor('#fc3a3a')
-                    .setTitle('Verification was unsuccessful!')
-                    .setDescription(`Your Discord and Minecraft accounts have not been linked properly! Your current settings on Hypixel suggest that you do not have Discord. Please change this so you may be verified successfully!`)
-                    await interaction.reply({embeds: [embed], ephemeral: true})
-            }
-            uuid = response.data.id
-            axios.get(`https://api.hypixel.net/player?key=${hypixelKey}&uuid=${uuid}`)
-            .catch(err => (
-                console.log(`Unable to communicate with Hypixel API:
-                ${err}`)
-            ))
-            .then(async response => {
-                if (typeof response.data.player.socialMedia !== 'undefined') {
-                    if (typeof response.data.player.socialMedia.links !== 'undefined') {
-                        if (typeof response.data.player.socialMedia.links.DISCORD !== 'undefined') {
-                            var dc = response.data.player.socialMedia.links.DISCORD
-                            // HAS DC LINKED
-                            if (interaction.member.user.tag == dc) {
-                                // DC CORRECT
-                                memrole = interaction.guild.roles.cache.find(r => r.id === memberRole)
-                                if (interaction.member.kickable) {
-                                    var embed = new EmbedBuilder()
-                                    .setColor('#3afc6e')
-                                    .setTitle('Verified User!')
-                                    .setDescription('Your Discord and Minecraft accounts have been linked successfully! Your nickname has been changed to your Minecraft username.')
-                                    interaction.member.roles.add(memrole)
-                                    interaction.member.setNickname(username)
-                                    await interaction.reply({embeds: [embed], ephemeral: true})
-                                } else {
-                                    var embed = new EmbedBuilder()
-                                    .setColor('Blue')
-                                    .setTitle('Verification was semi-successful!')
-                                    .setDescription(`Your nickname cannot be changed! But don't worry, your account was linked!`)
-                                    interaction.member.roles.add(memrole)
-                                    await interaction.reply({ embeds: [embed], ephemeral: true})
-                                }
-                    } else {
-                        // DC INCORRECT
-                         var embed = new EmbedBuilder()
-                            .setColor('#fc3a3a')
-                            .setTitle('Verification was unsuccessful!')
-                            .setDescription(`Your Discord and Minecraft accounts have not been linked properly! Your current settings on Hypixel suggest that you are ${dc}. Please change this so you may be verified successfully!`)
-                        await interaction.reply({embeds: [embed], ephemeral: true})
-                    }
-                        } else {
-                            nolink()
-                        }
-                    } else {
-                        nolink()
-                    }
-                } else {
-                    nolink()
-                }
+  if (commandName === 'verify') {
+    const username = interaction.options.getString('username'); // safer than .value
+    if (!username) {
+      return interaction.reply({ content: "Missing username!", ephemeral: true });
+    }
 
-        })
+    console.log(`Verifying: ${username}`);
 
-        })
-	}
-})
+    try {
+      // Step 1: Get UUID from username
+      const mojangRes = await axios.get(`https://api.mojang.com/users/profiles/minecraft/${username}`);
+      const uuid = mojangRes.data.id;
 
-client.login(token)
+      // Step 2: Get Hypixel player data
+      const hypixelRes = await axios.get(`https://api.hypixel.net/player?key=${HYPIXEL_KEY}&uuid=${uuid}`);
+
+      const player = hypixelRes.data.player;
+
+      // Helper to reply "no Discord linked"
+      const replyNoLink = async () => {
+        const embed = new EmbedBuilder()
+          .setColor('#fc3a3a')
+          .setTitle('Verification unsuccessful!')
+          .setDescription(
+            'Your Discord and Minecraft accounts are not linked properly!\n' +
+            'Please link your Discord in your Hypixel social settings.'
+          );
+        await interaction.reply({ embeds: [embed], ephemeral: true });
+      };
+
+      // Check if Discord is linked
+      if (!player?.socialMedia?.links?.DISCORD) {
+        return replyNoLink();
+      }
+
+      const linkedDiscord = player.socialMedia.links.DISCORD;
+
+      if (interaction.user.tag !== linkedDiscord) {
+        const embed = new EmbedBuilder()
+          .setColor('#fc3a3a')
+          .setTitle('Verification unsuccessful!')
+          .setDescription(
+            `Your linked Discord is **${linkedDiscord}**, ` +
+            `but you're using **${interaction.user.tag}**.\n` +
+            'Please update your Hypixel Discord link.'
+          );
+        return interaction.reply({ embeds: [embed], ephemeral: true });
+      }
+
+      // ── Success path ────────────────────────────────────────
+      const role = interaction.guild.roles.cache.get(MEMBER_ROLE);
+
+      if (!role) {
+        console.warn(`Role ID ${MEMBER_ROLE} not found in guild`);
+      }
+
+      const successEmbed = new EmbedBuilder()
+        .setColor('#3afc6e')
+        .setTitle('Verified!')
+        .setDescription('Your accounts are linked correctly!');
+
+      let replyContent = { embeds: [successEmbed], ephemeral: true };
+
+      // Try to add role
+      if (role) {
+        await interaction.member.roles.add(role);
+        successEmbed.setDescription(successEmbed.data.description + '\nRole added.');
+      }
+
+      // Try to change nickname
+      try {
+        await interaction.member.setNickname(username);
+        successEmbed.setDescription(successEmbed.data.description + '\nNickname updated.');
+      } catch (err) {
+        successEmbed
+          .setColor('Blue')
+          .setTitle('Partially verified!')
+          .setDescription('Accounts linked, but nickname could not be changed (missing permissions?).');
+      }
+
+      await interaction.reply(replyContent);
+
+    } catch (error) {
+      console.error('Verification error:', error?.response?.data || error.message);
+
+      let msg = 'Something went wrong during verification.';
+      if (error.response?.status === 404) {
+        msg = `Minecraft player **${username}** not found.`;
+      } else if (error.response?.status === 429) {
+        msg = 'Rate limited — try again later.';
+      }
+
+      const embed = new EmbedBuilder()
+        .setColor('#fc3a3a')
+        .setTitle('Error')
+        .setDescription(msg);
+
+      await interaction.reply({ embeds: [embed], ephemeral: true });
+    }
+  }
+});
+
+client.login(TOKEN);
