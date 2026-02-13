@@ -1,8 +1,8 @@
 const { Client, GatewayIntentBits, EmbedBuilder } = require('discord.js');
 const axios = require('axios').default;
 
-const client = new Client({ 
-  intents: 3276799   // or better: use specific intents only (see note below)
+const client = new Client({
+  intents: 3276799 // or better: use specific intents only (see note below)
 });
 
 // ────────────────────────────────────────────────
@@ -40,7 +40,7 @@ client.on('interactionCreate', async interaction => {
   }
 
   if (commandName === 'verify') {
-    const username = interaction.options.getString('username'); // safer than .value
+    const username = interaction.options.getString('username');
     if (!username) {
       return interaction.reply({ content: "Missing username!", ephemeral: true });
     }
@@ -54,7 +54,6 @@ client.on('interactionCreate', async interaction => {
 
       // Step 2: Get Hypixel player data
       const hypixelRes = await axios.get(`https://api.hypixel.net/player?key=${HYPIXEL_KEY}&uuid=${uuid}`);
-
       const player = hypixelRes.data.player;
 
       // Helper to reply "no Discord linked"
@@ -142,3 +141,18 @@ client.on('interactionCreate', async interaction => {
 });
 
 client.login(TOKEN);
+
+// ────────────────────────────────────────────────
+//   ADD THIS BLOCK TO KEEP RENDER WEB SERVICE ALIVE
+// ────────────────────────────────────────────────
+const express = require('express');
+const app = express();
+
+app.get('/', (req, res) => {
+  res.send('Hypixel Verification Bot is online and running! 🚀');
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`Web server started on port ${PORT} (required by Render free tier)`);
+});
